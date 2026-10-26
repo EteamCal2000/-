@@ -169,6 +169,9 @@ begin
   return json_build_object('ok', true, 'code', 'SENT');
 end $$;
 
+-- "Automatically expose new tables"를 껐어도 동작하도록 명시적으로 권한 부여 (읽기만)
+grant usage on schema public to anon, authenticated;
+grant select on pods, members, messages to anon, authenticated;
 grant execute on function create_pod, join_pod, leave_pod, set_fare, mark_paid, send_message to anon, authenticated;
 
 -- ---------- 실시간 반영 켜기 ----------

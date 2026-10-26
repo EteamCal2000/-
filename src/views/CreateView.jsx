@@ -41,6 +41,7 @@ export default function CreateView({ me, notify, requireName }) {
         if (!r.ok) {
           notify(ERR[r.code] || r.code, 'warn')
           if (r.conflict) go(`/p/${r.conflict}`)
+          if (r.debt) go(`/p/${r.debt.pod}`)
           return
         }
         go(`/p/${r.id}?new=1`)

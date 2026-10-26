@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
 import { api } from '../api/index.js'
 import { useLive, go } from '../App.jsx'
-import { PLACES, podState, STATE_LABEL, fmtDate, fmtTime } from '../lib/core.js'
+import { PLACES, podState, STATE_LABEL, fmtDate, fmtTime, myDebt } from '../lib/core.js'
+import { DebtNotice } from './PodView.jsx'
 import Seats from './Seats.jsx'
 
 const DAYS = [
@@ -36,8 +37,11 @@ export default function ListView({ me }) {
     })
   }, [pods, origin, dest, day, onlyOpen])
 
+  const debt = myDebt(pods, me)
+
   return (
     <div className="page">
+      {debt && <div className="debt-top"><DebtNotice debt={debt} /></div>}
       {mine.length > 0 && (
         <section className="mine">
           <h2 className="label">내가 확정된 팟</h2>

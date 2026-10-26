@@ -1,6 +1,6 @@
 // Supabase 키가 없을 때 쓰는 로컬 데모 백엔드.
 // 같은 브라우저의 탭끼리만 공유되며, 규칙은 supabase/schema.sql 과 동일합니다.
-import { CONFLICT_WINDOW_MIN } from '../lib/core.js'
+import { CONFLICT_WINDOW_MIN, myDebt } from '../lib/core.js'
 
 const KEY = 'gachika-local-db-v1'
 let chan = null
@@ -70,6 +70,8 @@ export function makeLocalApi() {
     async createPod(me, f) {
       await delay()
       const db = load()
+      const debt = myDebt(db.pods, me)
+      if (debt) return { ok: false, code: 'DEBT', debt }
       const c = conflicting(db, me.id, f.departAt, null)
       if (c) return { ok: false, code: 'DUPLICATE', conflict: c.id }
       if (f.luggage > f.maxLuggage) return { ok: false, code: 'LUGGAGE' }
@@ -91,6 +93,8 @@ export function makeLocalApi() {
       if (!p || p.status !== 'open') return { ok: false, code: 'CLOSED' }
       if (p.fare != null) return { ok: false, code: 'DEPARTED' }
       if (p.members.some((m) => m.user_id === me.id)) return { ok: true, code: 'ALREADY' }
+      const debt = myDebt(db.pods, me)
+      if (debt) return { ok: false, code: 'DEBT', debt }
       const c = conflicting(db, me.id, p.depart_at, podId)
       if (c) return { ok: false, code: 'DUPLICATE', conflict: c.id }
       if (p.members.length >= p.capacity) return { ok: false, code: 'FULL' }
@@ -110,14 +114,17 @@ export function makeLocalApi() {
       save(db)
       return { ok: true, code: 'LEFT' }
     },
-    async setFare(me, podId, fare) {
+    async setFare(me, podId, fare, noshow = []) {
       await delay()
       if (!fare || fare < 1000 || fare > 200000) return { ok: false, code: 'BAD_FARE' }
       const db = load()
       const p = db.pods.find((x) => x.id === podId)
       if (!p || p.host_id !== me.id || p.status !== 'open') return { ok: false, code: 'NOT_HOST' }
       p.fare = fare
-      p.members.forEach((m) => { if (m.user_id === me.id) m.paid = true })
+      p.members.forEach((m) => {
+        if (m.user_id === me.id) m.paid = true
+        else if (noshow.includes(m.user_id)) { m.boarded = false; m.paid = true }
+      })
       save(db)
       return { ok: true, code: 'FARE_SET' }
     },

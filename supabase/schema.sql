@@ -32,6 +32,9 @@ create table if not exists members (
   primary key (pod_id, user_id)
 );
 
+-- v2: 탑승 확인(노쇼) — 이미 만든 DB에도 컬럼 추가
+alter table members add column if not exists boarded boolean not null default true;
+
 create table if not exists messages (
   id         bigint generated always as identity primary key,
   pod_id     uuid not null references pods(id) on delete cascade,
@@ -68,14 +71,30 @@ returns uuid language sql stable as $$
   limit 1
 $$;
 
+-- ---------- 미정산 확인: 탑승했는데 송금 안 한 정산이 있으면 새 팟 참여 불가 ----------
+create or replace function _unpaid(p_user text)
+returns json language sql stable as $$
+  select json_build_object('pod', p.id, 'amount',
+           (ceil(p.fare::numeric / greatest((select count(*) from members b where b.pod_id = p.id and b.boarded), 1) / 10) * 10)::int,
+           'host', p.host_name)
+  from members m join pods p on p.id = m.pod_id
+  where m.user_id = p_user and p.fare is not null and p.host_id <> p_user
+    and m.boarded and not m.paid
+  order by p.depart_at limit 1
+$$;
+
 -- ---------- 팟 만들기 (Host 자동 합류) ----------
 create or replace function create_pod(
   p_user text, p_name text, p_origin text, p_dest text, p_at timestamptz,
   p_capacity int, p_max_luggage int, p_luggage int, p_note text)
 returns json language plpgsql security definer set search_path = public as $$
-declare v_id uuid; v_conflict uuid;
+declare v_id uuid; v_conflict uuid; v_debt json;
 begin
   perform pg_advisory_xact_lock(hashtext(p_user));
+  v_debt := _unpaid(p_user);
+  if v_debt is not null then
+    return json_build_object('ok', false, 'code', 'DEBT', 'debt', v_debt);
+  end if;
   v_conflict := _conflicting_pod(p_user, p_at, null);
   if v_conflict is not null then
     return json_build_object('ok', false, 'code', 'DUPLICATE', 'conflict', v_conflict);
@@ -93,9 +112,13 @@ end $$;
 -- ---------- 합류: 행 잠금으로 동시 합류 시에도 정원 초과(중복 확정) 0건 ----------
 create or replace function join_pod(p_pod uuid, p_user text, p_name text, p_luggage int)
 returns json language plpgsql security definer set search_path = public as $$
-declare v_pod pods; v_count int; v_lug int; v_conflict uuid;
+declare v_pod pods; v_count int; v_lug int; v_conflict uuid; v_debt json;
 begin
   perform pg_advisory_xact_lock(hashtext(p_user));          -- 같은 사람의 동시 신청 직렬화
+  v_debt := _unpaid(p_user);
+  if v_debt is not null then
+    return json_build_object('ok', false, 'code', 'DEBT', 'debt', v_debt);
+  end if;
   select * into v_pod from pods where id = p_pod for update; -- 같은 팟의 동시 합류 직렬화
   if not found or v_pod.status <> 'open' then
     return json_build_object('ok', false, 'code', 'CLOSED');
@@ -137,8 +160,9 @@ begin
   return json_build_object('ok', true, 'code', 'LEFT');
 end $$;
 
--- ---------- 정산: Host가 총 요금 입력 ----------
-create or replace function set_fare(p_pod uuid, p_user text, p_fare int)
+-- ---------- 정산: Host가 총 요금 + 실제 탑승하지 않은 사람(노쇼) 입력 ----------
+drop function if exists set_fare(uuid, text, int);
+create or replace function set_fare(p_pod uuid, p_user text, p_fare int, p_noshow text[] default '{}')
 returns json language plpgsql security definer set search_path = public as $$
 begin
   if p_fare is null or p_fare < 1000 or p_fare > 200000 then
@@ -147,6 +171,8 @@ begin
   update pods set fare = p_fare where id = p_pod and host_id = p_user and status = 'open';
   if not found then return json_build_object('ok', false, 'code', 'NOT_HOST'); end if;
   update members set paid = true where pod_id = p_pod and user_id = p_user; -- Host는 이미 결제함
+  update members set boarded = false, paid = true                            -- 노쇼는 정산에서 제외
+   where pod_id = p_pod and user_id = any(coalesce(p_noshow, '{}')) and user_id <> p_user;
   return json_build_object('ok', true, 'code', 'FARE_SET');
 end $$;
 

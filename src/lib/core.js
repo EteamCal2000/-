@@ -27,6 +27,7 @@ export const ERR = {
   NOT_HOST: '모집자만 할 수 있어요.',
   NOT_MEMBER: '팟 멤버만 할 수 있어요.',
   BAD_FARE: '요금을 1,000원 이상으로 입력해 주세요.',
+  DEBT: '보내지 않은 정산이 있어요. 정산을 마쳐야 새 팟에 참여할 수 있어요.',
 }
 
 // 정산: 동승자는 1/n을 10원 단위 올림, 나머지는 먼저 결제한 Host 몫
@@ -35,6 +36,19 @@ export function splitFare(fare, n) {
   if (n === 1) return { per: 0, host: fare }
   const per = Math.ceil(fare / n / 10) * 10
   return { per, host: fare - per * (n - 1) }
+}
+
+// 실제 탑승한 사람(노쇼 제외) 기준으로 나눔
+export const boarded = (pod) => pod.members.filter((m) => m.boarded !== false)
+
+// 내가 탔는데 아직 송금 안 한 정산 (있으면 새 팟 참여 불가)
+export function myDebt(pods, me) {
+  for (const p of pods || []) {
+    if (p.fare == null || p.host_id === me.id) continue
+    const m = p.members.find((x) => x.user_id === me.id)
+    if (m && m.boarded !== false && !m.paid) return { pod: p.id, amount: splitFare(p.fare, boarded(p).length).per, host: p.host_name }
+  }
+  return null
 }
 
 export function podState(pod) {

@@ -40,7 +40,7 @@ export function makeSupabaseApi(url, key) {
     }),
     joinPod: (me, podId, luggage) => rpc('join_pod', { p_pod: podId, p_user: me.id, p_name: me.nickname, p_luggage: luggage }),
     leavePod: (me, podId) => rpc('leave_pod', { p_pod: podId, p_user: me.id }),
-    setFare: (me, podId, fare) => rpc('set_fare', { p_pod: podId, p_user: me.id, p_fare: fare }),
+    setFare: (me, podId, fare, noshow = []) => rpc('set_fare', { p_pod: podId, p_user: me.id, p_fare: fare, p_noshow: noshow }),
     markPaid: (me, podId, paid) => rpc('mark_paid', { p_pod: podId, p_user: me.id, p_paid: paid }),
     sendMessage: (me, podId, body) => rpc('send_message', { p_pod: podId, p_user: me.id, p_body: body }),
 

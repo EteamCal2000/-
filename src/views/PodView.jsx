@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import QRCode from 'qrcode'
 import { api } from '../api/index.js'
 import { useLive, go } from '../App.jsx'
-import { ERR, podState, STATE_LABEL, fmtDate, fmtTime, won, splitFare, shareText, shareUrl } from '../lib/core.js'
+import { ERR, podState, STATE_LABEL, fmtDate, fmtTime, won, splitFare, shareText, shareUrl, boarded } from '../lib/core.js'
 import Seats from './Seats.jsx'
 
 export default function PodView({ id, me, notify, requireName }) {
@@ -52,7 +52,9 @@ export default function PodView({ id, me, notify, requireName }) {
               <span className="avatar">{m.nickname.slice(0, 1)}</span>
               <span className="nm">{m.nickname}{m.user_id === pod.host_id && <em> 모집자</em>}{m.user_id === me.id && <em className="you"> 나</em>}</span>
               <span className="muted">{m.luggage ? `캐리어 ${m.luggage}` : ''}</span>
-              {pod.fare != null && <span className={`paid ${m.paid ? 'y' : 'n'}`}>{m.paid ? '정산완료' : '미정산'}</span>}
+              {pod.fare != null && (m.boarded === false
+                ? <span className="paid ns">노쇼</span>
+                : <span className={`paid ${m.paid ? 'y' : 'n'}`}>{m.paid ? '정산완료' : '미정산'}</span>)}
             </li>
           ))}
           {Array.from({ length: Math.max(0, pod.capacity - pod.members.length) }).map((_, i) => (
@@ -112,7 +114,7 @@ function JoinBox({ pod, s, me, notify, requireName, reload }) {
         notify(`확정! ${sec}초 만에 자리가 확보됐어요.`, 'ok')
         setResult({ ok: true, sec })
       } else {
-        setResult({ ok: false, code: r.code, conflict: r.conflict })
+        setResult({ ok: false, code: r.code, conflict: r.conflict, debt: r.debt })
         notify(ERR[r.code] || r.code, 'warn')
       }
       reload()
@@ -134,6 +136,7 @@ function JoinBox({ pod, s, me, notify, requireName, reload }) {
         {busy ? '확정 중…' : '바로 합류하기'}
       </button>
       <p className="muted small">누르는 즉시 확정돼요. 모집자 답장을 기다릴 필요가 없어요.</p>
+      {result && !result.ok && result.code === 'DEBT' && <DebtNotice debt={result.debt} />}
       {result && !result.ok && result.code === 'DUPLICATE' && (
         <div className="callout warn">
           비슷한 시간에 이미 확정된 팟이 있어서 <b>중복 확정이 막혔어요.</b>
@@ -145,17 +148,42 @@ function JoinBox({ pod, s, me, notify, requireName, reload }) {
   )
 }
 
+export function DebtNotice({ debt }) {
+  if (!debt) return null
+  return (
+    <div className="callout warn">
+      <b>{debt.host}님에게 보내지 않은 정산 {won(debt.amount)}이 있어요.</b>
+      정산을 마치기 전까지는 새 팟을 만들거나 합류할 수 없어요. 송금하면 바로 풀려요.
+      <button className="link" onClick={() => go(`/p/${debt.pod}`)}>정산하러 가기 →</button>
+    </div>
+  )
+}
+
 function FareBox({ pod, me, notify }) {
   const [open, setOpen] = useState(false)
   const [fare, setFare] = useState('')
-  const n = pod.members.length
+  const [rode, setRode] = useState(() => Object.fromEntries(pod.members.map((m) => [m.user_id, true])))
+  const n = pod.members.filter((m) => rode[m.user_id] !== false).length
   const sp = splitFare(Number(fare), n)
   if (!open) {
     return <section className="block"><button className="btn wide" onClick={() => setOpen(true)}>🚕 탑승 완료 · 요금 입력하고 정산 요청</button></section>
   }
   return (
     <section className="block farebox">
-      <h2 className="label">택시 요금 입력</h2>
+      <h2 className="label">1. 실제로 탄 사람 확인</h2>
+      <ul className="rode">
+        {pod.members.map((m) => (
+          <li key={m.user_id}>
+            <label>
+              <input type="checkbox" disabled={m.user_id === me.id} checked={rode[m.user_id] !== false}
+                onChange={(e) => setRode({ ...rode, [m.user_id]: e.target.checked })} />
+              {m.nickname}{m.user_id === me.id ? ' (나)' : ''}
+              {rode[m.user_id] === false && <em>노쇼 · 정산 제외</em>}
+            </label>
+          </li>
+        ))}
+      </ul>
+      <h2 className="label">2. 택시 요금 입력</h2>
       <div className="fare-input">
         <input inputMode="numeric" placeholder="예: 13800" value={fare} onChange={(e) => setFare(e.target.value.replace(/\D/g, ''))} autoFocus />
         <span>원</span>
@@ -166,7 +194,8 @@ function FareBox({ pod, me, notify }) {
       <div className="row gap">
         <button className="btn ghost" onClick={() => setOpen(false)}>닫기</button>
         <button className="btn primary grow" disabled={!fare} onClick={async () => {
-          const r = await api.setFare(me, pod.id, Number(fare))
+          const noshow = pod.members.filter((m) => rode[m.user_id] === false).map((m) => m.user_id)
+          const r = await api.setFare(me, pod.id, Number(fare), noshow)
           if (!r.ok) return notify(ERR[r.code] || r.code, 'warn')
           notify('정산 요청을 보냈어요. 동승자 화면에 금액이 바로 떠요.', 'ok')
         }}>정산 요청 보내기</button>
@@ -176,20 +205,23 @@ function FareBox({ pod, me, notify }) {
 }
 
 function Settlement({ pod, me, isHost, notify }) {
-  const n = pod.members.length
+  const riders = boarded(pod)
+  const n = riders.length
   const sp = splitFare(pod.fare, n)
   const mine = pod.members.find((m) => m.user_id === me.id)
-  const paidCount = pod.members.filter((m) => m.paid).length
+  const paidCount = riders.filter((m) => m.paid).length
   const done = paidCount === n
   return (
     <section className={`block settle ${done ? 'done' : ''}`}>
-      <h2 className="label">정산 {done ? '· 완료' : `· ${paidCount}/${n}`}</h2>
+      <h2 className="label">도착 · 정산 {done ? '· 완료' : `· ${paidCount}/${n}`}</h2>
       <div className="settle-grid">
         <div><span className="muted">총 요금</span><b>{won(pod.fare)}</b></div>
         <div><span className="muted">동승자 1인</span><b>{won(sp.per)}</b></div>
         <div><span className="muted">모집자 몫</span><b>{won(sp.host)}</b></div>
       </div>
-      {mine && !isHost && (
+      {!done && <p className="small warn-text">송금 표시를 안 한 사람은 정산을 마칠 때까지 새 팟에 참여할 수 없어요.</p>}
+      {mine && !isHost && mine.boarded === false && <p className="muted">탑승하지 않은 것으로 처리돼 정산에서 빠졌어요.</p>}
+      {mine && !isHost && mine.boarded !== false && (
         mine.paid
           ? <p className="ok-text">송금 완료로 표시했어요. <button className="link" onClick={() => api.markPaid(me, pod.id, false)}>취소</button></p>
           : <button className="btn primary wide big" onClick={async () => {

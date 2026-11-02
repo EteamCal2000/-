@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import QRCode from 'qrcode'
 import { api } from '../api/index.js'
-import { useLive, go } from '../App.jsx'
+import { useLive, go, LoadError } from '../App.jsx'
 import { ERR, podState, STATE_LABEL, fmtDate, fmtTime, won, splitFare, shareText, shareUrl, boarded } from '../lib/core.js'
 import Seats from './Seats.jsx'
 
@@ -10,7 +10,7 @@ export default function PodView({ id, me, notify, requireName }) {
   const isNew = location.hash.includes('new=1')
   const [showShare, setShowShare] = useState(isNew)
 
-  if (error) return <div className="page"><p className="error">불러오기 실패: {error}</p></div>
+  if (error && !pod) return <div className="page"><LoadError what="팟 정보를" onRetry={reload} /></div>
   if (pod === undefined) return <div className="page"><p className="muted center pad">불러오는 중…</p></div>
   if (!pod) return <div className="page"><p className="center pad">없는 팟이에요.</p><button className="btn" onClick={() => go('/')}>목록으로</button></div>
 
@@ -44,6 +44,11 @@ export default function PodView({ id, me, notify, requireName }) {
         </div>
       )}
 
+      {error && <LoadError what="최신 팟 정보를" onRetry={reload} compact />}
+
+      {/* 합류 전에는 '바로 합류'가 첫 화면 안에 보이도록 탑승자 목록보다 먼저 */}
+      {!myMember && <JoinBox pod={pod} s={s} me={me} notify={notify} requireName={requireName} reload={reload} />}
+
       <section className="block">
         <h2 className="label">확정된 탑승자</h2>
         <ul className="members">
@@ -62,8 +67,6 @@ export default function PodView({ id, me, notify, requireName }) {
           ))}
         </ul>
       </section>
-
-      {!myMember && <JoinBox pod={pod} s={s} me={me} notify={notify} requireName={requireName} reload={reload} />}
 
       {pod.fare != null && <Settlement pod={pod} me={me} isHost={isHost} notify={notify} />}
 
@@ -125,7 +128,7 @@ function JoinBox({ pod, s, me, notify, requireName, reload }) {
 
   return (
     <section className="block joinbox">
-      <div className="field">내 캐리어 <span className="muted">(남은 캐리어 자리 {lugLeft})</span>
+      <div className="field"><span>내 캐리어<small className="muted">남은 자리 {lugLeft}</small></span>
         <div className="seg">
           {[0, 1, 2].map((n) => (
             <button type="button" key={n} disabled={n > lugLeft} className={luggage === n ? 'on' : ''} onClick={() => setLuggage(n)}>{n}</button>
@@ -135,7 +138,7 @@ function JoinBox({ pod, s, me, notify, requireName, reload }) {
       <button className="btn primary wide big" disabled={busy} onClick={join}>
         {busy ? '확정 중…' : '바로 합류하기'}
       </button>
-      <p className="muted small">누르는 즉시 확정돼요. 모집자 답장을 기다릴 필요가 없어요.</p>
+      <p className="promise">답장 기다릴 필요 없이 바로 확정돼요</p>
       {result && !result.ok && result.code === 'DEBT' && <DebtNotice debt={result.debt} />}
       {result && !result.ok && result.code === 'DUPLICATE' && (
         <div className="callout warn">
@@ -248,7 +251,7 @@ function SharePanel({ pod, notify }) {
     <div className="share">
       <pre className="share-text">{text}</pre>
       <div className="row gap">
-        <button className="btn primary grow" onClick={copy}>톡방용 글 복사</button>
+        <button className="btn solid grow" onClick={copy}>톡방용 글 복사</button>
         {navigator.share && <button className="btn" onClick={() => navigator.share({ text }).catch(() => {})}>공유…</button>}
       </div>
       {qr && (
@@ -289,7 +292,7 @@ function Chat({ pod, me, notify }) {
       </div>
       <form className="row gap" onSubmit={send}>
         <input className="grow" placeholder="메시지" value={v} onChange={(e) => setV(e.target.value)} maxLength={500} />
-        <button className="btn primary">전송</button>
+        <button className="btn solid">전송</button>
       </form>
     </section>
   )

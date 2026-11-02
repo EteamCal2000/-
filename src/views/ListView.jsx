@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { api } from '../api/index.js'
-import { useLive, go } from '../App.jsx'
+import { useLive, go, LoadError } from '../App.jsx'
 import { PLACES, podState, STATE_LABEL, fmtDate, fmtTime, myDebt } from '../lib/core.js'
 import { DebtNotice } from './PodView.jsx'
 import Seats from './Seats.jsx'
@@ -12,7 +12,7 @@ const DAYS = [
 ]
 
 export default function ListView({ me }) {
-  const { data: pods, error } = useLive(() => api.listPods(), [])
+  const { data: pods, error, reload } = useLive(() => api.listPods(), [])
   const [origin, setOrigin] = useState('')
   const [dest, setDest] = useState('')
   const [day, setDay] = useState('all')
@@ -72,12 +72,12 @@ export default function ListView({ me }) {
         </div>
       </section>
 
-      {error && <p className="error">불러오기 실패: {error}</p>}
+      {error && <LoadError what="팟 목록을" onRetry={reload} compact={!!pods} />}
       {!pods && !error && <p className="muted center pad">불러오는 중…</p>}
       {pods && shown.length === 0 && (
         <div className="empty">
           <p>조건에 맞는 팟이 없어요.</p>
-          <button className="btn primary" onClick={() => go('/new')}>내가 팟 만들기</button>
+          <button className="btn" onClick={() => go('/new')}>내가 팟 만들기</button>
         </div>
       )}
       <div className="list">

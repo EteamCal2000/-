@@ -147,6 +147,9 @@ export function makeLocalApi() {
       save(db)
       return { ok: true, code: 'SENT' }
     },
+    // 로컬 데모는 네트워크가 없으므로 항상 연결 상태
+    status: () => 'connected',
+    onStatus(fn) { fn('connected'); return () => {} },
     subscribe(fn) {
       listeners.add(fn)
       return () => listeners.delete(fn)
